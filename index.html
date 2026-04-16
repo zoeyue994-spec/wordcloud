@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>文字雲產生器</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3-cloud/1.2.7/d3.layout.cloud.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    margin: 0; padding: 20px;
+    background: #f5f5f7;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .panel {
+    background: white; border-radius: 12px; padding: 20px;
+    margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  textarea {
+    width: 100%; min-height: 160px; padding: 12px;
+    border: 1px solid #ddd; border-radius: 8px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 13px;
+    resize: vertical;
+  }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  button {
+    padding: 8px 16px; border: none; border-radius: 6px;
+    background: #007aff; color: white; cursor: pointer; font-size: 14px;
+  }
+  button.secondary { background: #e5e5ea; color: #333; }
+  button:hover { opacity: 0.85; }
+  .aspects { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+  .aspect-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: #f0f0f3; border-radius: 6px;
+  }
+  .aspect-item input[type="color"] {
+    width: 32px; height: 32px; border: none; border-radius: 4px;
+    cursor: pointer; background: none;
+  }
+  .canvas-wrap {
+    background-image:
+      linear-gradient(45deg, #e0e0e0 25%, transparent 25%),
+      linear-gradient(-45deg, #e0e0e0 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #e0e0e0 75%),
+      linear-gradient(-45deg, transparent 75%, #e0e0e0 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 600px;
+  }
+  #cloud { display: block; }
+  label { font-size: 13px; color: #555; }
+  input[type="number"], select {
+    padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>文字雲產生器</h1>
+
+  <div class="panel">
+    <label>輸入資料(格式:【面向】 詞 權重 詞 權重 ...)</label>
+    <textarea id="input">【品牌】 Dyson 100 石頭 85 追覓 80 伊萊克斯 65 LG 50 國際牌 45 小米 35
+【購買評估】 貓狗毛 90 自動集塵 85 電池 80 零纏繞 75 輕巧 70 洗地機 65 價格 60 機械臂 55
+【使用痛點】 故障 88 卡頭髮 75 過敏 70 發臭 55 手痠 50</textarea>
+    <div class="controls">
+      <button onclick="parseAndRender()">解析並產生</button>
+      <label>寬:<input type="number" id="w" value="1000" style="width:80px"></label>
+      <label>高:<input type="number" id="h" value="600" style="width:80px"></label>
+      <label>最大字體:<input type="number" id="maxFont" value="80" style="width:70px"></label>
+      <label>最小字體:<input type="number" id="minFont" value="18" style="width:70px"></label>
+      <label>方向:
+        <select id="rotate">
+          <option value="0" selected>全部水平</option>
+          <option value="1">水平+垂直</option>
+          <option value="2">隨機角度</option>
+        </select>
+      </label>
+      <label>形狀:
+        <select id="shape">
+          <option value="rect" selected>矩形</option>
+          <option value="ellipse">橢圓形</option>
+        </select>
+      </label>
+      <button class="secondary" onclick="downloadSVG()">下載 SVG</button>
+      <button class="secondary" onclick="downloadPNG()">下載 PNG</button>
+    </div>
+    <div class="aspects" id="aspects"></div>
+  </div>
+
+  <div class="panel">
+    <div class="canvas-wrap" id="canvasWrap">
+      <svg id="cloud"></svg>
+    </div>
+  </div>
+</div>
+
+<script>
+const defaultColors = ['#FF6B6B','#4ECDC4','#FFA94D','#845EC2','#2C73D2','#00C9A7','#C34A36','#4D8076'];
+let aspectColors = {};
+let parsedData = [];
+
+function parseInput(text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  const result = [];
+  lines.forEach(line => {
+    const m = line.match(/^【([^】]+)】\s*(.+)$/);
+    if (!m) return;
+    const aspect = m[1].trim();
+    const tokens = m[2].trim().split(/\s+/);
+    for (let i = 0; i + 1 < tokens.length; i += 2) {
+      const word = tokens[i];
+      const weight = parseFloat(tokens[i+1]);
+      if (!isNaN(weight)) result.push({ text: word, weight, aspect });
+    }
+  });
+  return result;
+}
+
+function renderAspectControls(aspects) {
+  const wrap = document.getElementById('aspects');
+  wrap.innerHTML = '';
+  aspects.forEach((a, i) => {
+    if (!aspectColors[a]) aspectColors[a] = defaultColors[i % defaultColors.length];
+    const div = document.createElement('div');
+    div.className = 'aspect-item';
+    div.innerHTML = `<input type="color" value="${aspectColors[a]}" onchange="updateColor('${a}', this.value)"><span>${a}</span>`;
+    wrap.appendChild(div);
+  });
+}
+
+function updateColor(aspect, color) {
+  aspectColors[aspect] = color;
+  renderCloud();
+}
+
+function parseAndRender() {
+  parsedData = parseInput(document.getElementById('input').value);
+  const aspects = [...new Set(parsedData.map(d => d.aspect))];
+  renderAspectControls(aspects);
+  renderCloud();
+}
+
+function renderCloud() {
+  const w = +document.getElementById('w').value;
+  const h = +document.getElementById('h').value;
+  const maxFontInit = +document.getElementById('maxFont').value;
+  const minFontInit = +document.getElementById('minFont').value;
+  const rotateMode = document.getElementById('rotate').value;
+  const shape = document.getElementById('shape').value;
+
+  const weights = parsedData.map(d => d.weight);
+  const minW = Math.min(...weights), maxW = Math.max(...weights);
+
+  const rotateFn = () => {
+    if (rotateMode === '0') return 0;
+    if (rotateMode === '1') return Math.random() > 0.5 ? 0 : 90;
+    return (Math.random() - 0.5) * 90;
+  };
+
+  // 自動放大:逐步增加字體倍率,直到有字放不下為止,取最後一次全部成功的結果
+  let bestPlaced = null;
+  let scaleFactor = 1.0;
+  const step = 0.1;
+  const maxScale = 4.0;
+  let attempts = 0;
+
+  function tryLayout(factor, callback) {
+    const maxFont = maxFontInit * factor;
+    const minFont = minFontInit * factor;
+    const sizeFor = wt => minW === maxW ? (maxFont+minFont)/2 :
+      minFont + (wt - minW) / (maxW - minW) * (maxFont - minFont);
+    const words = parsedData.map(d => ({
+      text: d.text, size: sizeFor(d.weight), aspect: d.aspect
+    }));
+    d3.layout.cloud()
+      .size([w, h])
+      .words(words)
+      .padding(2)
+      .rotate(rotateFn)
+      .spiral(shape === 'ellipse' ? 'archimedean' : 'rectangular')
+      .font('PingFang TC, Microsoft JhengHei, sans-serif')
+      .fontWeight('bold')
+      .fontSize(d => d.size)
+      .on('end', placed => callback(placed, words.length))
+      .start();
+  }
+
+  function attempt(factor) {
+    attempts++;
+    if (attempts > 50) { draw(bestPlaced || []); return; }
+    tryLayout(factor, (placed, total) => {
+      if (placed.length === total) {
+        bestPlaced = placed;
+        if (factor < maxScale) {
+          attempt(factor + step);
+        } else {
+          draw(bestPlaced);
+        }
+      } else {
+        draw(bestPlaced || placed);
+      }
+    });
+  }
+
+  attempt(scaleFactor);
+
+  function draw(words) {
+    const svg = d3.select('#cloud')
+      .attr('width', w).attr('height', h)
+      .attr('viewBox', `0 0 ${w} ${h}`);
+    svg.selectAll('*').remove();
+    svg.append('g')
+      .attr('transform', `translate(${w/2},${h/2})`)
+      .selectAll('text')
+      .data(words).enter().append('text')
+      .style('font-size', d => d.size + 'px')
+      .style('font-family', 'PingFang TC, Microsoft JhengHei, sans-serif')
+      .style('font-weight', '700')
+      .style('fill', d => aspectColors[d.aspect])
+      .attr('text-anchor', 'middle')
+      .attr('transform', d => `translate(${d.x},${d.y})rotate(${d.rotate})`)
+      .text(d => d.text);
+  }
+}
+
+function downloadSVG() {
+  const svg = document.getElementById('cloud');
+  const serializer = new XMLSerializer();
+  const source = '<?xml version="1.0" encoding="UTF-8"?>\n' + serializer.serializeToString(svg);
+  const blob = new Blob([source], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'wordcloud.svg'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadPNG() {
+  const svg = document.getElementById('cloud');
+  const w = +svg.getAttribute('width'), h = +svg.getAttribute('height');
+  const serializer = new XMLSerializer();
+  const source = serializer.serializeToString(svg);
+  const blob = new Blob([source], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w * 2; canvas.height = h * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.drawImage(img, 0, 0);
+    canvas.toBlob(b => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = 'wordcloud.png'; a.click();
+    });
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+parseAndRender();
+</script>
+</body>
+</html>
