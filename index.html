@@ -65,7 +65,7 @@
   <h1>文字雲產生器</h1>
 
   <div class="panel">
-    <label>輸入資料(格式:【面向】 詞 權重 詞 權重 ...)</label>
+    <label>輸入資料（格式：【面向】 詞 權重 詞 權重 ...）</label>
     <textarea id="input">【品牌】 Dyson 100 石頭 85 追覓 80 伊萊克斯 65 LG 50 國際牌 45 小米 35
 【購買評估】 貓狗毛 90 自動集塵 85 電池 80 零纏繞 75 輕巧 70 洗地機 65 價格 60 機械臂 55
 【使用痛點】 故障 88 卡頭髮 75 過敏 70 發臭 55 手痠 50</textarea>
@@ -75,6 +75,7 @@
       <label>高:<input type="number" id="h" value="600" style="width:80px"></label>
       <label>最大字體:<input type="number" id="maxFont" value="80" style="width:70px"></label>
       <label>最小字體:<input type="number" id="minFont" value="18" style="width:70px"></label>
+      <label>間距:<input type="number" id="padding" value="1" min="0" max="20" style="width:60px"></label>
       <label>方向:
         <select id="rotate">
           <option value="0" selected>全部水平</option>
@@ -86,6 +87,14 @@
         <select id="shape">
           <option value="rect" selected>矩形</option>
           <option value="ellipse">橢圓形</option>
+        </select>
+      </label>
+      <label>背景:
+        <select id="bgColor">
+          <option value="transparent">透明</option>
+          <option value="#000000">黑色</option>
+          <option value="#ffffff">白色</option>
+          <option value="#1a1a2e">深藍</option>
         </select>
       </label>
       <button class="secondary" onclick="downloadSVG()">下載 SVG</button>
@@ -102,7 +111,7 @@
 </div>
 
 <script>
-const defaultColors = ['#FF6B6B','#4ECDC4','#FFA94D','#845EC2','#2C73D2','#00C9A7','#C34A36','#4D8076'];
+const defaultColors = ['#FFFFFF','#FFA94D','#4ECDC4','#FF6B6B','#845EC2','#2C73D2','#00C9A7','#C34A36'];
 let aspectColors = {};
 let parsedData = [];
 
@@ -143,6 +152,9 @@ function updateColor(aspect, color) {
 function parseAndRender() {
   parsedData = parseInput(document.getElementById('input').value);
   const aspects = [...new Set(parsedData.map(d => d.aspect))];
+  aspects.forEach((a, i) => {
+    if (!aspectColors[a]) aspectColors[a] = defaultColors[i % defaultColors.length];
+  });
   renderAspectControls(aspects);
   renderCloud();
 }
@@ -152,8 +164,13 @@ function renderCloud() {
   const h = +document.getElementById('h').value;
   const maxFontInit = +document.getElementById('maxFont').value;
   const minFontInit = +document.getElementById('minFont').value;
+  const paddingVal = +document.getElementById('padding').value;
   const rotateMode = document.getElementById('rotate').value;
   const shape = document.getElementById('shape').value;
+  const bgColor = document.getElementById('bgColor').value;
+
+  const canvasWrap = document.getElementById('canvasWrap');
+  canvasWrap.style.background = bgColor === 'transparent' ? '' : bgColor;
 
   const weights = parsedData.map(d => d.weight);
   const minW = Math.min(...weights), maxW = Math.max(...weights);
@@ -164,7 +181,7 @@ function renderCloud() {
     return (Math.random() - 0.5) * 90;
   };
 
-  // 自動放大:逐步增加字體倍率,直到有字放不下為止,取最後一次全部成功的結果
+  // 自動放大：逐步增加字體倍率，直到有字放不下為止，取最後一次全部成功的結果
   let bestPlaced = null;
   let scaleFactor = 1.0;
   const step = 0.1;
@@ -174,7 +191,7 @@ function renderCloud() {
   function tryLayout(factor, callback) {
     const maxFont = maxFontInit * factor;
     const minFont = minFontInit * factor;
-    const sizeFor = wt => minW === maxW ? (maxFont+minFont)/2 :
+    const sizeFor = wt => minW === maxW ? (maxFont + minFont) / 2 :
       minFont + (wt - minW) / (maxW - minW) * (maxFont - minFont);
     const words = parsedData.map(d => ({
       text: d.text, size: sizeFor(d.weight), aspect: d.aspect
@@ -182,7 +199,7 @@ function renderCloud() {
     d3.layout.cloud()
       .size([w, h])
       .words(words)
-      .padding(2)
+      .padding(paddingVal)
       .rotate(rotateFn)
       .spiral(shape === 'ellipse' ? 'archimedean' : 'rectangular')
       .font('PingFang TC, Microsoft JhengHei, sans-serif')
@@ -216,8 +233,13 @@ function renderCloud() {
       .attr('width', w).attr('height', h)
       .attr('viewBox', `0 0 ${w} ${h}`);
     svg.selectAll('*').remove();
+
+    if (bgColor !== 'transparent') {
+      svg.append('rect').attr('width', w).attr('height', h).attr('fill', bgColor);
+    }
+
     svg.append('g')
-      .attr('transform', `translate(${w/2},${h/2})`)
+      .attr('transform', `translate(${w / 2},${h / 2})`)
       .selectAll('text')
       .data(words).enter().append('text')
       .style('font-size', d => d.size + 'px')
@@ -234,7 +256,7 @@ function downloadSVG() {
   const svg = document.getElementById('cloud');
   const serializer = new XMLSerializer();
   const source = '<?xml version="1.0" encoding="UTF-8"?>\n' + serializer.serializeToString(svg);
-  const blob = new Blob([source], {type: 'image/svg+xml'});
+  const blob = new Blob([source], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = 'wordcloud.svg'; a.click();
@@ -246,7 +268,7 @@ function downloadPNG() {
   const w = +svg.getAttribute('width'), h = +svg.getAttribute('height');
   const serializer = new XMLSerializer();
   const source = serializer.serializeToString(svg);
-  const blob = new Blob([source], {type: 'image/svg+xml'});
+  const blob = new Blob([source], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(blob);
   const img = new Image();
   img.onload = () => {
